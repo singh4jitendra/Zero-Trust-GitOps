@@ -1,0 +1,144 @@
+# =============================================================================
+# LOCAL-KIND-ONLY variant of the secure deployment.
+#
+# Differences from the production deployment.yaml:
+#   * Uses the locally-built bank-api:clean image (loaded with `kind load`).
+#   * The attestation-agent init container is the public curlimages/curl
+#     image with an inline shell shim that talks to trustee-mock (which
+#     speaks the same KBS protocol surface as the real Trustee).
+#   * Loosened securityContext so the curl image can run as its default user
+#     while still dropping all capabilities.
+# Everything else is identical to deployment.yaml so the demo flow matches.
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bank-secure
+  labels:
+    demo: secure
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bank-api
+  namespace: bank-secure
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bank-api
+  namespace: bank-secure
+  labels:
+    app: bank-api
+    demo: secure
+    environment: kind-local
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bank-api
+  template:
+    metadata:
+      labels:
+        app: bank-api
+        demo: secure
+    spec:
+      serviceAccountName: bank-api
+      runtimeClassName: kata-cc
+      automountServiceAccountToken: false
+
+      initContainers:
+        - name: attestation-agent
+          image: curlimages/curl:8.10.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TRUSTEE_URL
+              value: "http://trustee-kbs.attestation.svc:8080"
+            - name: RESOURCE_ID
+              value: "default/bank-db-key/v1"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "[attestation-agent] requesting session nonce from Trustee..."
+              AUTH=$(curl -fsS -X POST "$TRUSTEE_URL/kbs/v0/auth" \
+                     -H 'content-type: application/json' \
+                     -d '{"workload_id":"bank-api"}')
+              SID=$(echo "$AUTH" | sed -n 's/.*"session_id":"\([^"]*\)".*/\1/p')
+              echo "[attestation-agent] session=$SID"
+              MEAS=$(printf 'bank-api:clean@reference' | sha256sum | awk '{print $1}')
+              echo "[attestation-agent] presenting evidence measurement=${MEAS}"
+              curl -fsS -X POST "$TRUSTEE_URL/kbs/v0/attest" \
+                   -H 'content-type: application/json' \
+                   -d "{\"session_id\":\"$SID\",\"evidence\":{\"tee_type\":\"snp\",\"measurement\":\"$MEAS\"}}" >/dev/null
+              echo "[attestation-agent] requesting DB key release..."
+              RESP=$(curl -fsS -X POST "$TRUSTEE_URL/kbs/v0/resource/$RESOURCE_ID" \
+                     -H "X-Session-Id: $SID")
+              echo "$RESP" | sed -n 's/.*"value":"\([^"]*\)".*/\1/p' > /run/trustee/db-key
+              if [ ! -s /run/trustee/db-key ]; then
+                echo "[attestation-agent] FAILED to release secret: $RESP"
+                exit 1
+              fi
+              echo "[attestation-agent] DB key written to /run/trustee/db-key"
+          volumeMounts:
+            - name: trustee-out
+              mountPath: /run/trustee
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: bank-api
+          image: bank-api:clean
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: IMAGE_VARIANT
+              value: clean
+            - name: RUNTIME_CLASS_HINT
+              value: "kata-cc (MOCK on kind; real on AKS SEV-SNP)"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: TRUSTEE_URL
+              value: "http://trustee-kbs.attestation.svc:8080"
+          volumeMounts:
+            - name: trustee-out
+              mountPath: /run/trustee
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      volumes:
+        - name: trustee-out
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bank-api
+  namespace: bank-secure
+spec:
+  type: ClusterIP
+  selector:
+    app: bank-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

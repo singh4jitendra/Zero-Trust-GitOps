@@ -1,0 +1,28 @@
+# Argo CD Application that wires the insecure demo manifests into GitOps.
+#
+# NOTE: the demo scripts apply manifests directly with `kubectl apply -f`,
+# so this file is provided as a REFERENCE for teams that want to drive the
+# demo through Argo CD. Replace `your-github-org` with your real GitHub
+# org/user (and push poc/ to that repo) before applying this Application.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bank-api-insecure
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-github-org/secure-gitops-poc.git
+    targetRevision: main
+    path: poc/demo1-insecure/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bank-insecure
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

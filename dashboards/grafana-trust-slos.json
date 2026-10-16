@@ -1,0 +1,155 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Trust SLOs for the Secure GitOps POC — matches slide 12 of the KubeCon India 2026 deck.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Attestation Success Rate (5m)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.99 },
+              { "color": "green", "value": 0.9999 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(trustee_attest_success_total[5m])) / clamp_min(sum(rate(trustee_attest_total[5m])), 1)",
+          "legendFormat": "success rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Signature Mismatch (last 1h)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(kyverno_admission_requests_total{rule_name=\"verify-bank-api-images\", resource_response=\"fail\"}[1h]))",
+          "legendFormat": "denials",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Secrets Released to Attested Workloads (5m)",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "ops", "decimals": 2 }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(trustee_secret_released_total[5m]))",
+          "legendFormat": "released/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Attestation outcomes",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "rate(trustee_attest_success_total[1m])",
+          "legendFormat": "success",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(trustee_attest_failure_total[1m])",
+          "legendFormat": "failure",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Secret release outcomes",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        {
+          "expr": "rate(trustee_secret_released_total[1m])",
+          "legendFormat": "released",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(trustee_secret_denied_total[1m])",
+          "legendFormat": "denied",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Argo CD Applications",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "expr": "argocd_app_info{namespace=\"argocd\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["secure-gitops", "trust-slo", "kubecon-india-2026"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "",
+  "title": "Trust SLOs — Secure GitOps POC",
+  "uid": "secure-gitops-trust-slos",
+  "version": 1
+}

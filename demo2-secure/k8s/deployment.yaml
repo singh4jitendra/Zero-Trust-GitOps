@@ -1,0 +1,137 @@
+# ---------------------------------------------------------------------------
+# DEMO 2 — Secure GitOps deployment (AKS / production manifest).
+#
+# For the LOCAL kind demo, scripts/21-demo2-secure-allowed apply the
+# sibling file k8s-kind/deployment-kind.yaml instead, which uses the
+# locally-built bank-api:clean image and a curl-based attestation shim.
+#
+# Before applying THIS file against AKS, replace "your-github-org" below
+# with the GitHub org/user that publishes your signed images, OR rewrite
+# the image references to point at your ACR (e.g. acrxxx.azurecr.io/...).
+#
+# Differences vs demo 1:
+#  * Image tag is pinned by digest and signed (Cosign keyless).
+#  * Kyverno ClusterPolicy "verify-image-cosign" will block any image that
+#    fails signature verification at admission time.
+#  * runtimeClassName: kata-cc -> pod runs inside a per-pod CVM (SEV-SNP)
+#    on AKS Confidential Container node pool. On kind it's a marked mock.
+#  * No plain Kubernetes Secret. An init-container fetches the DB key from
+#    the Trustee/KBS only after presenting valid TEE evidence.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bank-secure
+  labels:
+    demo: secure
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bank-api
+  namespace: bank-secure
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bank-api
+  namespace: bank-secure
+  labels:
+    app: bank-api
+    demo: secure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bank-api
+  template:
+    metadata:
+      labels:
+        app: bank-api
+        demo: secure
+      annotations:
+        # Picked up by the AKS CoCo guest agent; declares the policy the
+        # attester is expected to enforce inside the TEE.
+        io.katacontainers.config.agent.policy: |
+          allowed_endpoints:
+            - "trustee-kbs.attestation.svc:8080"
+    spec:
+      serviceAccountName: bank-api
+      # THIS is the pillar from slide 5 "Hardware Isolation".
+      runtimeClassName: kata-cc
+      automountServiceAccountToken: false
+
+      # The attestation-agent init container fetches the DB key from the
+      # Trustee only after the TEE evidence verifies. On real CoCo the agent
+      # runs inside the guest; we model it as an init-container so the demo
+      # is identical on kind and AKS.
+      initContainers:
+        - name: attestation-agent
+          image: ghcr.io/your-github-org/attestation-agent:0.10.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TRUSTEE_URL
+              value: "http://trustee-kbs.attestation.svc:8080"
+            - name: RESOURCE_ID
+              value: "default/bank-db-key/v1"
+            - name: OUTPUT_PATH
+              value: "/run/trustee/db-key"
+          volumeMounts:
+            - name: trustee-out
+              mountPath: /run/trustee
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: bank-api
+          # The image MUST be referenced by digest in production.
+          # The Kyverno verifyImages rule will mutate :clean -> @sha256:... after
+          # successful signature verification and pin it.
+          image: ghcr.io/your-github-org/bank-api:clean
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: IMAGE_VARIANT
+              value: clean
+            - name: RUNTIME_CLASS_HINT
+              value: "kata-cc (AMD SEV-SNP)"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: TRUSTEE_URL
+              value: "http://trustee-kbs.attestation.svc:8080"
+          volumeMounts:
+            - name: trustee-out
+              mountPath: /run/trustee
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+
+      volumes:
+        - name: trustee-out
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi

@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# Closes the "Signed Malware" leg of the Trust Gap (slide 4).
+#
+# Every image deployed into the bank-secure namespace MUST carry a valid
+# Cosign signature produced by the project's GitHub Actions workflow
+# (keyless OIDC). Unsigned or wrong-issuer images are rejected at admission.
+#
+# The "mutateDigest: true" line below makes Kyverno rewrite the tag to a
+# digest after verification — so the resource Argo CD applies is pinned to
+# exactly the bytes we verified. That defeats tag-swap attacks.
+#
+# IMPORTANT: when you wire this up to a real GitHub repo, replace
+# "your-github-org" below with the GitHub org/user that hosts this repo.
+# The local kind demo does NOT need a real value — scripts/01-bootstrap-local
+# flips this policy to Audit so locally-built images aren't blocked.
+# ---------------------------------------------------------------------------
+apiVersion: kyverno.io/v2beta1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-cosign
+  annotations:
+    policies.kyverno.io/title: Verify image signature (Sigstore)
+    policies.kyverno.io/category: Supply-chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Every image deployed into a "secure" namespace must be signed by the
+      project's GitHub Actions workflow via Sigstore keyless OIDC.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+    - name: verify-bank-api-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - bank-secure
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/your-github-org/bank-api*"
+            - "*.azurecr.io/bank-api*"
+            # Also catches locally-built images used in the kind demo so
+            # `bank-api:tampered` is rejected for missing a signature too.
+            - "bank-api*"
+            - "docker.io/library/bank-api*"
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - entries:
+                - keyless:
+                    # Lock to the exact GitHub Actions workflow that builds
+                    # AND signs the image. Anything else fails verification.
+                    subject: "https://github.com/your-github-org/secure-gitops-poc/.github/workflows/build-sign-provenance.yml@refs/heads/main"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev

@@ -1,0 +1,26 @@
+# Every pod in bank-secure MUST request RuntimeClass kata-cc.
+# This is the second leg of the secure-by-default story: even if somebody
+# pushes a valid signature, the workload still has to run inside a TEE.
+apiVersion: kyverno.io/v2beta1
+kind: ClusterPolicy
+metadata:
+  name: require-runtime-class-kata-cc
+  annotations:
+    policies.kyverno.io/title: Require RuntimeClass kata-cc for regulated namespaces
+    policies.kyverno.io/category: Confidential Computing
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-kata-cc
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["bank-secure"]
+      validate:
+        message: "Pods in bank-secure must use runtimeClassName 'kata-cc' (Confidential Containers)."
+        pattern:
+          spec:
+            runtimeClassName: "kata-cc"

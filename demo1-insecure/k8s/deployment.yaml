@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------------------
+# DEMO 1 — Insecure GitOps deployment.
+# Image is NOT signed. There is NO admission policy. The pod runs on plain
+# runc, so the host kernel and the node operator can inspect its memory.
+# This is the baseline the deck calls "The Trust Gap".
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bank-insecure
+  labels:
+    demo: insecure
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bank-api
+  namespace: bank-insecure
+  labels:
+    app: bank-api
+    demo: insecure
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bank-api
+  template:
+    metadata:
+      labels:
+        app: bank-api
+        demo: insecure
+    spec:
+      # NOTE: no runtimeClassName here -> default runc on a shared kernel.
+      # NOTE: no image-verification admission policy is installed in the
+      #       insecure demo, so an unsigned :tampered image is accepted.
+      containers:
+        - name: bank-api
+          # Local kind uses a kind-loaded image; on Azure use ACR.
+          # The :tampered tag is intentionally malicious. Audience pay attention.
+          image: bank-api:tampered
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: IMAGE_VARIANT
+              value: tampered
+            - name: RUNTIME_CLASS_HINT
+              value: "runc (shared kernel)"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: db-key
+              mountPath: /etc/secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: db-key
+          secret:
+            # Plain Kubernetes Secret — base64, NOT encrypted.
+            # The node admin and any pod that escapes the sandbox can read this.
+            secretName: bank-db-key

@@ -1,0 +1,19 @@
+# RuntimeClass selecting Kata + Confidential Containers.
+#
+# On AKS with a Confidential Container node pool this resolves to
+# Kata-qemu running each pod inside its own AMD SEV-SNP CVM.
+# On the local kind cluster we install the SAME RuntimeClass name
+# but pointing at the runc handler — clearly logged as "[MOCK]"
+# in the bootstrap script, so the demo is honest about it.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-cc
+handler: kata-cc       # on kind we patch this to "runc" with a marker label
+scheduling:
+  nodeSelector:
+    kubernetes.azure.com/kata-cc-isolation: "true"
+overhead:
+  podFixed:
+    cpu: "250m"
+    memory: "256Mi"

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bank-api
+  namespace: bank-insecure
+  labels:
+    app: bank-api
+    demo: insecure
+spec:
+  type: ClusterIP
+  selector:
+    app: bank-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
